@@ -14,10 +14,12 @@ Portability : portable
 module Data.Grib ( -- *The GRIB Monad
                    GribIO
                  , runGribIO
+                 , runGribIOEnvs
                  , runGribIO_
                  , skipMessage
                  , skipMessageIf
                  , skipMessageIf_
+                 , genEnvironments
 
                    -- **Get values
                    --
@@ -84,8 +86,8 @@ data GribEnv = GribEnv
                }
 
 -- Helper that generates a list of environments for GribIO.
-envs :: FilePath -> IO [GribEnv]
-envs path = fmap (zipWith3 GribEnv (repeat path) [0..]) (handles path)
+genEnvironments :: FilePath -> IO [GribEnv]
+genEnvironments path = fmap (zipWith3 GribEnv (repeat path) [0..]) (handles path)
 
 -- |If this exception is raised in 'GribIO', the message will be
 -- discarded.  Normally, you simply call 'skipMessage' instead of
@@ -145,13 +147,19 @@ type GribIO = ReaderT GribEnv IO
 runGribIO :: FilePath  -- ^a path to a GRIB file
           -> GribIO a  -- ^an action to take on each GRIB message in the file
           -> IO [a]    -- ^the results of the actions
-runGribIO path m = envs path >>= foldr k (return [])
+runGribIO path m = genEnvironments path >>= foldr k (return [])
+  where k env res = trySkipMessage (runReaderT m env) >>=
+                    either (const res) (\x -> fmap (x :) res)
+
+-- |Like 'runGribIO', but supply the environments
+runGribIOEnvs :: [GribEnv] -> GribIO a -> IO [a]
+runGribIOEnvs envs m = foldr k (return []) envs
   where k env res = trySkipMessage (runReaderT m env) >>=
                     either (const res) (\x -> fmap (x :) res)
 
 -- |Like 'runGribIO', but discard the results.
 runGribIO_ :: FilePath -> GribIO a -> IO ()
-runGribIO_ path m = envs path >>= mapM_ (runReaderT m)
+runGribIO_ path m = genEnvironments path >>= mapM_ (runReaderT m)
 
 -- |Return the name of the file being read.
 getFilename :: GribIO FilePath
